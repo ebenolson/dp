@@ -29,8 +29,8 @@ Experiment.isExperiment = true
 
 function Experiment:__init(config)
    assert(type(config) == 'table', "Constructor requires key-value arguments")
-   local args, id, description, model, optimizer, validator, tester, 
-         observer, random_seed, epoch, mediator, overwrite, max_epoch
+   local args, id, model, optimizer, validator, tester, 
+         observer, random_seed, epoch, mediator, overwrite, max_epoch, description
       = xlua.unpack(
       {config},
       'Experiment', 
@@ -39,7 +39,7 @@ function Experiment:__init(config)
       {arg='id', type='dp.ObjectID',
        help='uniquely identifies the experiment. '..
        'Defaults to using dp.uniqueID() to initialize a dp.ObjectID'},
-      {arg='model', type='dp.Model', req=true,
+      {arg='model', type='dp.Model | nn.Module', req=true,
        help='Model instance shared by all Propagators.'},
       {arg='optimizer', type='dp.Optimizer',
        help='Optimizer instance used for propagating the train set'},
@@ -69,7 +69,7 @@ function Experiment:__init(config)
    self._is_done_experiment = false
    self._id = id or dp.ObjectID(dp.uniqueID())
    assert(self._id.isObjectID)
-   self._model = model
+   self:setModel(model)
    self._epoch = epoch
    self:setObserver(observer)
    self._optimizer = optimizer
@@ -110,7 +110,7 @@ end
 
 --loops through the propagators until a doneExperiment is received or
 --experiment reaches max_epochs
-function Experiment:run(datasource)
+function Experiment:run(datasource, once)
    if not self._setup then
       self:setup(datasource)
    end
@@ -123,20 +123,22 @@ function Experiment:run(datasource)
    local train_set = datasource:trainSet()
    local valid_set = datasource:validSet()
    local test_set = datasource:testSet()
+   local atleastonce = false
    repeat
       self._epoch = self._epoch + 1
-      if self._optimizer then
+      if self._optimizer and train_set then
          self._optimizer:propagateEpoch(train_set, report)
       end
-      if self._validator then
+      if self._validator and valid_set then
          self._validator:propagateEpoch(valid_set, report)
       end
-      if self._tester then
+      if self._tester and test_set then
          self._tester:propagateEpoch(test_set, report)
       end
       report = self:report()
       self._mediator:publish("doneEpoch", report)
-   until (self:isDoneExperiment() or self._epoch >= self._max_epoch)
+      atleastonce = true
+   until (self:isDoneExperiment() or self._epoch >= self._max_epoch or (once and atleastonce))
    self._mediator:publish("finalizeExperiment")
 end
 
@@ -157,6 +159,10 @@ function Experiment:name()
    return self._id:name()
 end
 
+function Experiment:model()
+   return self._model
+end
+
 function Experiment:optimizer()
    return self._optimizer
 end
@@ -167,6 +173,10 @@ end
 
 function Experiment:tester()
    return self._tester
+end
+
+function Experiment:mediator()
+   return self._mediator
 end
 
 function Experiment:randomSeed()
@@ -200,8 +210,8 @@ function Experiment:setMaxEpoch(max_epoch)
 end
 
 function Experiment:setObserver(observer)
-   if not torch.typename(observer) and type(observer) == 'table' then
-      --if list, make composite observer
+   if torch.type(observer) == 'table' then
+      -- if list, make composite observer
       observer = dp.CompositeObserver(observer)
    end
    self._observer = observer
@@ -211,4 +221,51 @@ function Experiment:setRandomSeed(random_seed)
    torch.manualSeed(random_seed)
    math.randomseed(random_seed)
    self._random_seed = random_seed
+end
+
+function Experiment:setModel(model)
+   if not model.isModel then
+      print("Experiment:setModel Warning : "..
+         "'model' argument isn't an instance of dp.Model."..
+         "Assuming it's a nn.Module instance."..
+         "Wrapping it in dp.Module (this doesn't always work as-is)"
+      )
+      model = dp.Module{module=model}
+   end
+   self._model = model
+end
+
+function Experiment:type(new_type)
+   if self._model then
+      self._model:type(new_type)
+   end
+   if self._optimizer then
+      self._optimizer:type(new_type)
+   end
+   if self._validator then
+      self._validator:type(new_type)
+   end
+   if self._tester then
+      self._tester:type(new_type)
+   end
+end
+
+function Experiment:float()
+   return self:type('torch.FloatTensor')
+end
+
+function Experiment:double()
+   return self:type('torch.DoubleTensor')
+end
+
+function Experiment:cuda()
+   return self:type('torch.CudaTensor')
+end
+
+function Experiment:int()
+   return self:type('torch.IntTensor')
+end
+
+function Experiment:long()
+   return self:type('torch.LongTensor')
 end

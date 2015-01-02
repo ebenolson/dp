@@ -18,7 +18,7 @@ function Propagator:__init(config)
       'Propagates Batches sampled from a DataSet using a Sampler '..
       'through a Model in order to evaluate a Loss, provide Feedback '.. 
       'or train the model',
-      {arg='loss', type='dp.Loss', req=true,
+      {arg='loss', type='dp.Loss | nn.Criterion', req=true,
        help='a neural network Loss to evaluate or minimize'},
       {arg='visitor', type='dp.Visitor',
        help='visits models at the end of each batch propagation to '.. 
@@ -63,9 +63,9 @@ function Propagator:setup(config)
        'Propagator should not hold a reference to a dataset due to ' ..
        'the propagator\'s possible serialization.'}
    )
-   assert(id.isObjectID)
+   assert(torch.isTypeOf(id, 'dp.ObjectID'))
    self._id = id
-   assert(mediator.isMediator)
+   assert(torch.isTypeOf(mediator, 'dp.Mediator'))
    self._mediator = mediator
    self:setModel(model)
    self._sampler:setup{mediator=mediator, model=model}
@@ -98,15 +98,23 @@ function Propagator:propagateEpoch(dataset, report)
    local sampler = self._sampler:sampleEpoch(dataset)
    while true do
       -- reuse the batch object
+      if batch then
+         assert(torch.type(batch) == 'dp.Batch')
+      end
+      
       batch, i, n = sampler(batch)
       if not batch then 
          -- for aesthetics :
-         xlua.progress(last_n, last_n)
+         if self._progress then
+            xlua.progress(last_n, last_n)
+         end
          break 
       end
+      
       self:propagateBatch(batch, report)
+      
       if self._progress then
-         -- disp progress
+         -- display progress
          xlua.progress(i, n)
       end
       last_n = n
@@ -121,8 +129,7 @@ function Propagator:propagateEpoch(dataset, report)
    self._epoch_duration = sys.clock() - start_time
    self._batch_duration = self._epoch_duration / last_n
    self._example_speed = last_n / self._epoch_duration
-   self._num_batches = last_n / n_batch
-   self._batch_speed = (self._num_batches / self._epoch_duration)
+   self._batch_speed = (n_batch / self._epoch_duration)
    if self._stats then
       print("\n==> epoch size = "..last_n..' examples')
       print("==> batch duration = "..(self._batch_duration*1000)..' ms')
@@ -209,7 +216,7 @@ function Propagator:model()
 end
 
 function Propagator:setObserver(observer)
-   if not torch.typename(observer) and type(observer) == 'table' then
+   if torch.type(observer) == 'table' then
       --if list, make composite observer
       observer = dp.CompositeObserver(observer)
    end
@@ -221,7 +228,7 @@ function Propagator:observer()
 end
 
 function Propagator:setVisitor(visitor)
-   if not torch.typename(visitor) and type(visitor) == 'table' then
+   if torch.type(visitor) == 'table' then
       --if list, make visitor_chain
       visitor = dp.VisitorChain{visitors=visitor}
    end
@@ -233,7 +240,7 @@ function Propagator:visitor()
 end
 
 function Propagator:setFeedback(feedback)
-   if not torch.typename(feedback) and type(feedback) == 'table' then
+   if torch.type(feedback) == 'table' then
       --if list, make visitor_chain
       feedback = dp.CompositeFeedback{feedbacks=feedback}
    end
@@ -245,9 +252,43 @@ function Propagator:feedback()
 end
 
 function Propagator:setLoss(loss)
+   if not loss.isLoss then
+      print("Propagator:setLoss Warning : "..
+         "'loss' argumetn isn't an instance of dp.Loss."..
+         "Assuming it's a nn.Criterion instance."..
+         "Wrapping it in dp.Criterion (this doesn't always work as-is)"
+      )
+      loss = dp.Criterion{criterion=loss}
+   end
    self._loss = loss
 end
 
 function Propagator:loss()
    return self._loss
+end
+
+function Propagator:type(new_type)
+   if self._loss then
+      self._loss:type(new_type)
+   end
+end
+
+function Propagator:float()
+   return self:type('torch.FloatTensor')
+end
+
+function Propagator:double()
+   return self:type('torch.DoubleTensor')
+end
+
+function Propagator:cuda()
+   return self:type('torch.CudaTensor')
+end
+
+function Propagator:int()
+   return self:type('torch.IntTensor')
+end
+
+function Propagator:long()
+   return self:type('torch.LongTensor')
 end

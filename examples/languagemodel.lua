@@ -14,7 +14,6 @@ cmd:option('--decayPoint', 100, 'epoch at which learning rate is decayed')
 cmd:option('--decayFactor', 0.1, 'factory by which learning rate is decayed at decay point')
 cmd:option('--maxOutNorm', 2, 'max norm each layers output neuron weights')
 cmd:option('--maxNormPeriod', 5, 'Applies MaxNorm Visitor every maxNormPeriod batches')
-cmd:option('--momentum', 0, 'momentum')
 cmd:option('--batchSize', 512, 'number of examples per batch')
 cmd:option('--cuda', false, 'use CUDA')
 cmd:option('--useDevice', 1, 'sets the device (GPU) to use')
@@ -53,7 +52,7 @@ cmd:option('--progress', false, 'print progress bar')
 
 cmd:text()
 opt = cmd:parse(arg or {})
-print(opt)
+table.print(opt)
 
 
 --[[data]]--
@@ -86,7 +85,7 @@ if opt.convolution then
       dropout = opt.dropout and nn.Dropout() or nil,
       acc_update = opt.accUpdate
    }
-   local nOutputFrame = hiddenModel:nOutputFrame(opt.contextSize)
+   local nOutputFrame = hiddenModel:outputSize(opt.contextSize, 'bwc')
    print("Convolution has "..nOutputFrame.." output Frames")
    inputSize = nOutputFrame*opt.convOutputSize
 else
@@ -158,18 +157,6 @@ mlp = dp.Sequential{
    }
 }
 
---[[GPU or CPU]]--
-if opt.cuda then
-   print"Using CUDA"
-   require 'cutorch'
-   require 'cunn'
-   if opt.softmaxtree or opt.softmaxforest then
-      require 'cunnx'
-   end
-   cutorch.setDevice(opt.useDevice)
-   mlp:cuda()
-end
-
 --[[Propagators]]--
 train = dp.Optimizer{
    loss = opt.softmaxtree and dp.TreeNLL() or dp.NLL(),
@@ -219,5 +206,19 @@ xp = dp.Experiment{
    random_seed = os.time(),
    max_epoch = opt.maxEpoch
 }
+
+--[[GPU or CPU]]--
+if opt.cuda then
+   require 'cutorch'
+   require 'cunn'
+   if opt.softmaxtree or opt.softmaxforest then
+      require 'cunnx'
+   end
+   cutorch.setDevice(opt.useDevice)
+   xp:cuda()
+end
+
+print"dp.Models :"
+print(mlp)
 
 xp:run(datasource)

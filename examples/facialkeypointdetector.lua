@@ -38,7 +38,7 @@ cmd:option('--neuralSize', 1000, 'Size of first neural layer in 3 Neural Layer M
 cmd:option('--mlp', false, 'use multi-layer perceptron, as opposed to convolution neural network')
 cmd:text()
 opt = cmd:parse(arg or {})
-print(opt)
+table.print(opt)
 
 assert(opt.submissionFile ~= '', 'provide filename, e.g.: --submissionFile submission12.csv')
 
@@ -75,7 +75,7 @@ cnn = dp.Sequential()
 local inputSize
 if not opt.mlp then
    inputSize = datasource:imageSize('c')
-   outputSize = {datasource:imageSize('h'), datasource:imageSize('w')}
+   height, width = datasource:imageSize('h'), datasource:imageSize('w')
    for i=1,#opt.channelSize do
       local conv = dp.Convolution2D{
          input_size = inputSize, 
@@ -90,11 +90,9 @@ if not opt.mlp then
          sparse_init = not opt.normalInit
       }
       cnn:add(conv)
-      inputSize = opt.channelSize[i]
-      outputSize[1] = conv:nOutputFrame(outputSize[1], 1)
-      outputSize[2] = conv:nOutputFrame(outputSize[2], 2)
+      inputSize, height, width = conv:outputSize(height, width, 'bchw')
    end
-   inputSize = inputSize*outputSize[1]*outputSize[2]
+   inputSize = inputSize*height*width
    print("input to first Neural layer has: "..inputSize.." neurons")
 else
    inputSize = datasource:featureSize()
@@ -140,16 +138,6 @@ cnn:add(
       output = dp.SequenceView() --same
    }
 )
-
-print(cnn)
-
---[[GPU or CPU]]--
-if opt.cuda then
-   require 'cutorch'
-   require 'cunn'
-   cutorch.setDevice(opt.useDevice)
-   cnn:cuda()
-end
 
 local visitor = {}
 -- the ordering here is important:
@@ -207,5 +195,18 @@ xp = dp.Experiment{
    random_seed = os.time(),
    max_epoch = opt.maxEpoch
 }
+
+--[[GPU or CPU]]--
+if opt.cuda then
+   require 'cutorch'
+   require 'cunn'
+   cutorch.setDevice(opt.useDevice)
+   xp:cuda()
+end
+
+print"dp.Models :"
+print(cnn)
+print"nn.Modules :"
+print(cnn:toModule(datasource:trainSet():sub(1,32)))
 
 xp:run(datasource)

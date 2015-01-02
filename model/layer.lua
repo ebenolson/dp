@@ -21,7 +21,7 @@ function Layer:__init(config)
        help='the View used for communicating outputs and gradOutputs'},
       {arg='dropout', type='nn.Dropout', 
        help='applies dropout to the inputs of this model.'},
-      {arg='sparse_init', type='boolean', default=true,
+      {arg='sparse_init', type='boolean', default=false,
        help='sparse initialization of weights. See Martens (2010), '..
        '"Deep learning via Hessian-free optimization"'},
       {arg='acc_update', type='boolean', default=false,
@@ -42,7 +42,9 @@ function Layer:__init(config)
    self._sparse_init = sparse_init
    self._acc_update = acc_update
    parent.__init(self, config)
-   self:reset()
+   if self._sparse_init then
+      self:sparseReset()
+   end
    self._tags.hasParams = true
    if acc_update then
       self._tags.accUpdate = true
@@ -83,7 +85,7 @@ end
 function Layer:_forward(carry)
    -- some modules like dropout have a different behavior during 
    -- evaluation vs training :
-   if carry.evaluate then 
+   if carry:getObj('evaluate') then 
       self._module:evaluate()
    else
       self._module:training()
@@ -126,16 +128,17 @@ function Layer:zeroGradParameters()
    end
 end
 
-function Layer:reset()
-   self._module:reset()
-   if self._sparse_init then
-      local params = self:parameters()
-      -- Only affects 2D parameters.
-      -- Assumes that 2D parameters are aranged (output_dim x input_dim)
-      for k,param in pairs(params) do
-         if param:dim() == 2 then
-            self._sparseReset(param)
-         end
+function Layer:reset(stdv)
+   self._module:reset(stdv)
+end
+
+function Layer:sparseReset()
+   local params = self:parameters()
+   -- Only affects 2D parameters.
+   -- Assumes that 2D parameters are aranged (output_dim x input_dim)
+   for k,param in pairs(params) do
+      if param:dim() == 2 then
+         self._sparseReset(param)
       end
    end
 end
@@ -203,6 +206,16 @@ function Layer:_type(type)
    self:inputType(type)
    self:outputType(type)
    self._module:type(type)
+end
+
+-- takes the forward (next) modules from the output View
+-- and passes them backward to the input View
+-- most of the magic happens in DataView:moduleGet/Put()
+function Layer:_toModule()
+   -- get the Module encapsulating the output View and its forwardGet Models
+   local fwd_module = self.output:moduleGet(self._module)
+   -- put this module in the input View so that the preceding Module can moduleGet it
+   self.input:modulePut(fwd_module, self._input_view, self._input_type)
 end
 
 -- static method for initializing weights matrices

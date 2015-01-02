@@ -60,33 +60,30 @@ function dptest.neural()
       mytester:assertTensorEq(params2[i]:float(), params[i]:float(), 0.00001)
       mytester:assertTensorEq(grads2[i]:float(), grads2[i]:float(), 0.00001)
    end
-   mytester:assert(torch.type(layer._affine.weight) == 'torch.CudaTensor')
+   mytester:assert(torch.type(layer._linear.weight) == 'torch.CudaTensor')
    mytester:assert(layer:inputType() == 'torch.CudaTensor')
    mytester:assert(layer:outputType() == 'torch.CudaTensor')
    mytester:assert(layer:moduleType() == 'torch.CudaTensor')
-   local output, carry = layer:forward(input, {nSample=5})
+   local output, carry = layer:forward(input, dp.Carry{nSample=5})
    output:backward('bf', grad_tensor:cuda())
    input = layer:backward(output, carry)
-   layer:setup{mediator=mediator, id=dp.ObjectID('layer')}
    -- nn
    local mlp = nn.Sequential()
    local m = nn.Linear(10,2):cuda()
-   m:share(layer._affine, 'weight', 'bias')
+   m:share(layer._linear, 'weight', 'bias')
    m:double()
    mlp:add(m)
    mlp:add(nn.Tanh())
    local mlp_act = mlp:forward(tensor)
    -- update
-   local visitor = dp.Learn{learning_rate=0.1}
-   visitor:setup{mediator=mediator, id=dp.ObjectID('learn')}
-   layer:accept(visitor)
+   layer:updateParameters(0.1)
    mytester:assertTensorEq(tensor, input:forward('bf', 'torch.DoubleTensor'), 0.00001)
    local mlp_grad = mlp:backwardUpdate(tensor, grad_tensor, 0.1)
    -- compare nn and dp
    mytester:assertTensorEq(mlp_act:double(), output:forward('bf', 'torch.DoubleTensor'), 0.00001)
    mytester:assertTensorEq(mlp_grad:double(), input:backward('bf', 'torch.DoubleTensor'), 0.00001)
-   mytester:assertTensorEq(layer._affine.weight:double(), m.weight, 0.00001)
-   mytester:assertTensorEq(layer._affine.bias:double(), m.bias, 0.00001)
+   mytester:assertTensorEq(layer._linear.weight:double(), m.weight, 0.00001)
+   mytester:assertTensorEq(layer._linear.bias:double(), m.bias, 0.00001)
 end
 
 function dptest.sequential()
@@ -101,17 +98,17 @@ function dptest.sequential()
       }
    }
    model:cuda()
-   local output, carry = model:forward(input, {nSample=5})
+   local output, carry = model:forward(input, dp.Carry{nSample=5})
    output:backward('bf', grad_tensor:cuda())
    input, carry = model:backward(output, carry)
-   mytester:assert(carry.nSample == 5, "Carry lost an attribute")
+   mytester:assert(carry:getObj('nSample') == 5, "Carry lost an attribute")
    -- nn
    local mlp = nn.Sequential()
    mlp:add(nn.Linear(10,4))
-   mlp:get(1):share(model:get(1)._affine:double(), 'weight', 'bias')
+   mlp:get(1):share(model:get(1)._linear:double(), 'weight', 'bias')
    mlp:add(nn.Tanh())
    mlp:add(nn.Linear(4,2))
-   mlp:get(3):share(model:get(2)._affine:double(), 'weight', 'bias')
+   mlp:get(3):share(model:get(2)._linear:double(), 'weight', 'bias')
    mlp:add(nn.LogSoftMax())
    local mlp_act = mlp:forward(tensor)
    local mlp_grad = mlp:backward(tensor, grad_tensor)
@@ -133,7 +130,7 @@ function dptest.dictionary()
    mlp:share(layer._module, 'weight')
    -- dp
    layer:cuda()
-   local output, carry = layer:forward(input, {nSample=8})
+   local output, carry = layer:forward(input, dp.Carry{nSample=8})
    mytester:assertTableEq(output:forward('bwc'):size():totable(), output_size, 0.00001)
    output:backward('bwc', grad_tensor:cuda())
    input = layer:backward(output, carry)
@@ -149,12 +146,9 @@ function dptest.dictionary()
    mytester:assertTensorEq(mlp_act, output:forward('bwc'):float(), 0.00001)
    -- update
    local act_ten = output:forward('bwc'):clone()
-   local visitor = dp.Learn{learning_rate=0.1}
-   visitor:setup{mediator=mediator, id=dp.ObjectID('learn')}
-   layer:accept(visitor)
-   layer:doneBatch()
+   layer:updateParameters(0.1)
    -- forward backward
-   output, carry2 = layer:forward(input, {nSample=5})
+   output, carry2 = layer:forward(input, dp.Carry{nSample=5})
    output:backward('bwc', grad_tensor:cuda())
    input, carry2 = layer:backward(output, carry2)
    mytester:assertTensorNe(act_ten:float(), output:forward('bwc'):float(), 0.00001)
@@ -173,7 +167,7 @@ function dptest.convolution2D()
       transfer=nn.Tanh()
    }
    layer:cuda()
-   local output, carry = layer:forward(input, {nSample=8})
+   local output, carry = layer:forward(input, dp.Carry{nSample=8})
    mytester:assertTableEq(output:forward('bchw'):size():totable(), output_size, 0.00001)
    output:backward('bchw', grad_tensor:cuda())
    input = layer:backward(output, carry)
@@ -197,12 +191,10 @@ function dptest.convolution2D()
    -- update
    local act_ten = output:forward('bhwc', 'torch.FloatTensor'):clone()
    local grad_ten = input:backward('bhwc', 'torch.FloatTensor'):clone()
-   local visitor = dp.Learn{learning_rate=0.1}
-   visitor:setup{mediator=mediator, id=dp.ObjectID('learn')}
-   layer:accept(visitor)
+   layer:updateParameters(0.1)
    layer:doneBatch()
    -- forward backward
-   output, carry2 = layer:forward(input, {nSample=8})
+   output, carry2 = layer:forward(input, dp.Carry{nSample=8})
    output:backward('bchw', grad_tensor:cuda())
    input, carry2 = layer:backward(output, carry2)
    mytester:assertTensorNe(act_ten, output:forward('bhwc', 'torch.FloatTensor'), 0.00001)
@@ -236,7 +228,7 @@ function dptest.softmaxtree()
    -- forward backward
    --- dp
    model:cuda()
-   local output, carry = model:forward(input, {nSample=5, targets=target})
+   local output, carry = model:forward(input, dp.Carry{nSample=5, targets=target})
    local gradWeight = model._module.gradWeight:clone()
    output:backward('b', grad_tensor:cuda())
    input, carry = model:backward(output, carry)
@@ -257,19 +249,17 @@ function dptest.softmaxtree()
    local weight = model._module.weight:clone()
    local act_ten = output:forward('bf'):clone()
    local grad_ten = input:backward('bf'):clone()
-   local visitor = dp.Learn{learning_rate=0.1}
-   visitor:setup{mediator=mediator, id=dp.ObjectID('learn')}
-   model:accept(visitor)
+   model:updateParameters(0.1)
    local weight2 = model._module.weight
    mytester:assertTensorNe(weight:float(), weight2:float(), 0.00001)
    model:doneBatch()
    -- forward backward
-   local output2, carry2 = model2:forward(input:clone(), {nSample=5, targets=target})
+   local output2, carry2 = model2:forward(input:clone(), dp.Carry{nSample=5, targets=target})
    output2:backward('b', grad_tensor:cuda())
    local input2, carry2 = model2:backward(output2, carry2)
    mytester:assertTensorNe(act_ten:float(), output2:forward('bf'):float(), 0.00001)
    mytester:assertTensorNe(grad_ten:float(), input2:backward('bf'):float(), 0.00001)
-   local output, carry = model:forward(input2:clone(), {nSample=5, targets=target})
+   local output, carry = model:forward(input2:clone(), dp.Carry{nSample=5, targets=target})
    output:backward('b', grad_tensor:cuda())
    local input, carry = model:backward(output, carry)
    mytester:assertTensorEq(output:forward('bf'):float(), output2:forward('bf'):float(), 0.00001)
@@ -297,7 +287,7 @@ function dptest.blocksparse()
    }
    model:cuda()
    
-   local output, carry = model:forward(input, {nSample=batchSize})
+   local output, carry = model:forward(input, dp.Carry{nSample=batchSize})
    local params = model:parameters()
    params = _.map(params, function(k,v) return v:float() end )
    output:backward('bf', gradOutput_tensor:cuda())
@@ -317,10 +307,10 @@ function dptest.nll()
    -- dp
    local input = dp.DataView('bf', input_tensor)
    local target = dp.ClassView('b', target_tensor)
-   local loss = dp.NLL()
+   local loss = dp.NLL{size_average=false} -- else loss isn't avg
    -- this shouldn't change anything since nn.ClassNLLCriterion doesn't work with cuda
    loss:cuda()
-   local err, carry = loss:forward(input, target, {nSample=5})
+   local err, carry = loss:forward(input, target, dp.Carry{nSample=5})
    input = loss:backward(input, target, carry)
    -- nn
    local criterion = nn.ClassNLLCriterion()
@@ -337,10 +327,10 @@ function dptest.treenll()
    -- dp
    local input = dp.DataView('b', input_tensor:select(2,1))
    local target = dp.ClassView('b', target_tensor)
-   local loss = dp.TreeNLL()
+   local loss = dp.TreeNLL{size_average=false} -- else loss isn't avg
    loss:cuda()
    -- the targets are actually ignored (SoftmaxTree uses them before TreeNLL)
-   local err, carry = loss:forward(input, target, {nSample=5})
+   local err, carry = loss:forward(input, target, dp.Carry{nSample=5})
    input = loss:backward(input, target, carry)
    -- nn
    local criterion = nn.ClassNLLCriterion()

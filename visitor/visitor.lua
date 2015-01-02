@@ -1,39 +1,46 @@
 ------------------------------------------------------------------------
 --[[ Visitor ]]--
 -- Visits a composite struture of Models and modifies their states.
-
--- TODO: 
 -- Visitors should try to access a model method assigned to 
--- each visitor (if exists). This would allow models to implement
+-- each visitor (if itexists). This would allow models to implement
 -- visitor specifics. (already started with dp.MaxNorm model)
--- Visitors accumulate statistics for reporting purposes
 ------------------------------------------------------------------------
 local Visitor = torch.class("dp.Visitor")
 Visitor.isVisitor = true
 
 function Visitor:__init(config)
    assert(type(config) == 'table', "Constructor requires key-value arguments")
-   local args, name, include, exclude, observer = xlua.unpack(
+   local args, name, zero_grads, include, exclude, observer, verbose 
+      = xlua.unpack(
       {config},
-      'Visitor', nil,
+      'Visitor', 
+      'Visits a composite struture of Models and modifies their states.',
       {arg='name', type='string', req=true,
        help='identifies visitor in reports.'},
+      {arg='zero_grads', type='boolean', default=true,
+       help='calls zeroGradParameters on each model after it has '..
+       'been visited. Should be true for the root vistior.'..
+       'Note that the VisitorChain sets its components to false'},
       {arg='include', type='table',
        help='only models having a true value for the member named ' .. 
        'in this table are visited, unless the member is also listed ' ..
        'in the exclude table, in this case it is not visited. ' ..
        'If include is empty, all models are included, unless ' ..
        'specified in the exclude list'},
-      {arg='exclude', type='table', default={},
+      {arg='exclude', type='table', default='',
        help='models having a member named in this table are not ' ..
-       'visited, even if the member is in the include table, i.e. ' ..
-       'exclude has priority over include'},
+       'visited, even if the member is in the include table, ' ..
+       'i.e. exclude has precedence over include. Defaults to {}'},
       {arg='observer', type='dp.Observer', 
-       help='observer that is informed when an event occurs.'}
+       help='observer that is notified when an event occurs.'},
+      {arg='verbose', type='boolean', default=true,
+       help='can print messages to stdout'}
    )
    self._name = name
-   self._exclude = exclude
+   self._zero_grads = zero_grads
+   self._exclude = (exclude == '') and {} or exclude
    self._include = include
+   self._verbose = verbose
    self:setObserver(observer)
 end
 
@@ -41,10 +48,14 @@ function Visitor:setup(config)
    assert(type(config) == 'table', "Setup requires key-value arguments")
    local args, mediator, model, propagator, id = xlua.unpack(
       {config},
-      'Visitor:setup', nil,
-      {arg='mediator', type='dp.Mediator'},
-      {arg='model', type='dp.Model'},
-      {arg='propagator', type='dp.Propagator'},
+      'Visitor:setup', 
+      'Visitor post-initialization method',
+      {arg='mediator', type='dp.Mediator',
+       help='used for inter-object communication.'},
+      {arg='model', type='dp.Model',
+       help='model that will be visited'},
+      {arg='propagator', type='dp.Propagator',
+       help='the propagator which makes use of this visitor'},
       {arg='id', type='dp.ObjectID',
        help='Set automatically by propagator. Use only for unit tests'}
    )
@@ -106,13 +117,20 @@ function Visitor:visitModel(model)
    if not self:canVisit(model) then 
       return 
    end
-   --TODO : mvstate[self:id():parent():name()][self:name()]
-   -- or mvstate[self._id_string] where self._id_string = self._id:toString())
-   -- has the model-visitor state been initialized?
+   
    if not model.mvstate[self:id():name()] then 
       model.mvstate[self:id():name()] = {}
    end
+   
    self:_visitModel(model)
+   
+   self:doneVisit(model)
+end
+
+function Visitor:doneVisit(model)
+   if self._zero_grads then
+      model:zeroGradParameters()
+   end
 end
 
 function Visitor:_visitModel(model)
@@ -126,5 +144,9 @@ end
 
 function Visitor:report()
    return {[self:name()] = {}}
+end
+
+function Visitor:setZeroGrads(zero_grads)
+   self._zero_grads = zero_grads
 end
 

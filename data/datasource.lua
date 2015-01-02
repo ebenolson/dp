@@ -11,25 +11,18 @@ DataSource.isDataSource = true
 function DataSource:__init(config)
    assert(type(config) == 'table', "Constructor requires key-value arguments")
    local args, train_set, valid_set, test_set, 
-         input_preprocess, output_preprocess
+         input_preprocess, target_preprocess
       = xlua.unpack(
       {config},
       'DataSource', 
       'Abstract Class ' ..
       'Used to generate up to 3 DataSets : train, valid and test. ' ..
-      'train_set is used for optimizing (e.g. backpropagating) a ' ..
-      'Criteria to a model. ' ..
-      'valid_set is used for cross-validation during training ' ..
-      '(e.g. for early-stopping). ' ..
-      'test_set is used to evaluate generalization performance ' ..
-      'after training (e.g. to compare different models).' ..
       'Preprocessing can be performed on all ' .. 
       'DataSets by fitting the preprocess (e.g. Standardization) on ' ..
       'only the training set, and reusing the same statistics on ' ..
       'the validation and test sets',
       {arg='train_set', type='dp.DataSet', --req=true,
-       help='used for optimizing (e.g. backpropagating) a ' ..
-      'Criteria to a model. '},
+       help='used for minimizing a Loss by optimizing a Model'},
       {arg='valid_set', type='dp.DataSet',
        help='used for cross-validation and for e.g. early-stopping.'},
       {arg='test_set', type='dp.Dataset',
@@ -83,18 +76,14 @@ function DataSource:testSet()
 end
 
 function DataSource:setInputPreprocess(input_preprocess)
-   if not torch.typename(input_preprocess) 
-      and type(input_preprocess) == 'table' 
-   then
+   if torch.type(input_preprocess)  == 'table' then
       input_preprocess = dp.Pipeline(input_preprocess)
    end
    self._input_preprocess = input_preprocess
 end
 
 function DataSource:setTargetPreprocess(target_preprocess)
-   if not torch.typename(target_preprocess) 
-      and type(target_preprocess) == 'table' 
-   then
+   if torch.type(target_preprocess) == 'table' then
       target_preprocess = dp.Pipeline(target_preprocess)
    end
    self._target_preprocess = target_preprocess
@@ -184,8 +173,9 @@ function DataSource.getDataPath(config)
           'A directory with this name is created within ' ..
           'data_directory to contain the downloaded files. Or is ' ..
           'expected to find the data files in this directory.'},
-         {arg='url', type='string', help='URL from which data ' ..
-          'can be downloaded in case it is not found in the path.'},
+         {arg='url', type='string', req=true,
+          help='URL from which data can be downloaded in case '..
+          'it is not found in the path.'},
          {arg='data_dir', type='string', default=dp.DATA_DIR,
           help='path to directory where directory name is expected ' ..
           'to contain the data, or where they will be downloaded.'},
@@ -197,8 +187,6 @@ function DataSource.getDataPath(config)
    local datasrc_dir = paths.concat(data_dir, name)
    local data_file = paths.basename(url)
    local data_path = paths.concat(datasrc_dir, data_file)
-
-   print("checking for file located at: ", data_path)
 
    dp.check_and_mkdir(data_dir)
    dp.check_and_mkdir(datasrc_dir)
@@ -221,10 +209,10 @@ function DataSource.getDataPath(config)
    return data_path
 end
 
-function DataSource.rescale(data, min, max)
+function DataSource.rescale(data, min, max, dmin, dmax)
    local range = max - min
-   local dmin = data:min()
-   local dmax = data:max()
+   local dmin = dmin or data:min()
+   local dmax = dmax or data:max()
    local drange = dmax - dmin
 
    data:add(-dmin)

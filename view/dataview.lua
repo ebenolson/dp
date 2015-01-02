@@ -11,6 +11,7 @@ function DataView:__init(view, input)
    if view and input then
       self:forward(view, input)
    end
+   self._module_graph = {}
 end
 
 ---------------------- FORWARD -----------------------
@@ -42,21 +43,22 @@ end
    
 -- This method could be called from multiple output Models
 function DataView:forwardGet(view, tensor_type)
+   self._got = true
    tensor_type = tensor_type or self._type
    -- retrieve a viewTable
    local viewTable = self._tensors[view]
    if not viewTable then
       -- no viewTable: get tensor from module
       return self:tensorFromModule(view, tensor_type)
-   else
-      local tensor = viewTable[tensor_type]
-      if not tensor then
-         return self:tensorFromModule(view, tensor_type)
-      end
-      return tensor
    end
+   local tensor = viewTable[tensor_type]
+   if not tensor then
+      return self:tensorFromModule(view, tensor_type)
+   end
+   return tensor
 end
 
+-- returns a tensor of shape view and type tensor_type
 function DataView:tensorFromModule(view, tensor_type)
    local viewTable = self._tensors[view] or {}
    local input_type = torch.typename(self._input)
@@ -103,12 +105,14 @@ end
 -- the different gradInputs must be accumulated (sum grads).
 function DataView:backwardGet(view, tensor_type)
    if view and view ~= self._view then
-      error("backwardGet should be called with same view used for "..
+      error(torch.type(self)..
+         ": backwardGet should be called with same view used for "..
          "last forward (or nil) i.e. ".. self._view .. " not " .. view)
    end
    if tensor_type and self._type ~= tensor_type then
-      error("backwardGet sould be called with the same type as "..
-           "forwarded input")
+      error(torch.type(self)..
+         ": backwardGet sould be called with the same type as "..
+         "forwarded input")
    end
    tensor_type = tensor_type or self._type
    
@@ -211,6 +215,114 @@ function DataView:default()
    return nn.Identity()
 end
 
+---------------- Module:toModule -----------------------
+
+-- accumulates all forward modules into a table
+function DataView:modulePut(fwd_module, view, tensor_type)
+   self._put = true
+   local viewTable = self._module_graph[view]
+   if not viewTable then
+      viewTable = {[tensor_type] = {fwd_module}}
+      self._module_graph[view] = viewTable
+      return
+   end
+   local moduleList = viewTable[tensor_type]
+   if not moduleList then
+      viewTable[tensor_type] = {fwd_module}
+      return
+   end
+   table.insert(moduleList, fwd_module)
+end
+
+-- composes all forward modules into a single composite Module :
+function DataView:moduleGet(bwd_module)
+   if not self._got then
+      if self._put or (not self._modules) then
+         error"Model:toModule() should be preceded by a call to Model:forward()"
+      end
+      -- assume self is the output layer's output View
+      return bwd_module
+   end
+   -- how many output Models use this?
+   local nOut = 0
+   local view, tensor_type, fwd_module
+   for view_, viewTable in pairs(self._module_graph) do
+      view = view_
+      for tensorType, moduleList in pairs(viewTable) do
+         nOut = nOut + #moduleList
+         tensor_type = tensorType
+         fwd_module = moduleList[1]
+      end
+   end
+   local mlp = nn.Sequential()
+   if bwd_module then -- the input View of the network has no bwd_module
+      -- the backward (previous) module comes first
+      mlp:add(bwd_module) 
+   end
+   if nOut == 1 then
+      -- only 1 output Model: simple build
+      local moduleTable = self._modules[view]
+      local viewModule = moduleTable[1]
+      if torch.type(viewModule) ~= 'nn.Identity' then
+         mlp:add(viewModule)
+      end
+      if tensor_type ~= self._type then
+         local typeModule = moduleTable[2][tensor_type]
+         mlp:add(typeModule)
+      end
+      mlp:add(fwd_module)
+      return mlp
+   end
+   
+   print"DataView:moduleGet warning: untested multi-output code follows"
+   -- else: multiple outputs : complicated build (output is a table)
+   -- nn.Sequential(
+   --    bwd_module,
+   --    nn.ConcatTable( --concatView
+   --       nn.Sequential(
+   --          viewTable1, 
+   --          nn.ConcatTable( --concatType
+   --             nn.Sequential(
+   --                typeTable1,
+   --                nn.ConcatTable( --concatFwd
+   --                   fwd_module1,
+   --                   ... multi fwd
+   --                )
+   --             )
+   --             ... multi type
+   --          )
+   --       )
+   --       ... multi view
+   --    ),
+   --    nn.FlattenTable()
+   -- )
+   -- TODO : prune simpler graphs (single view, type or module branches)
+   local concatView = nn.ConcatTable()
+   for view, viewTable in pairs(self._module_graph) do
+      local moduleTable = self._modules[view]
+      local viewModule = moduleTable[1]
+      local concatType = nn.ConcatTable()
+      local seqView = nn.Sequential()
+      seqView:add(viewModule)
+      for tensor_type, moduleList in pairs(viewTable) do
+         local typeModule = moduleTable[2][tensor_type]
+         local seqType = nn.Sequential()
+         seqType:add(typeModule)
+         local concatFwd = nn.ConcatTable()
+         for i, fwd_module in ipairs(moduleList) do
+            concatFwd:add(fwd_module)
+         end
+         seqType:add(concatFwd)
+         concatType:add(seqType)
+      end
+      seqView:add(concatType)
+      concatView:add(seqView)
+   end
+   mlp:add(concatView)
+   mlp:add(nn.FlattenTable())
+end
+
+
 ---------------------- MISC ----------------------------
 
 -- number of features in each sample
@@ -242,17 +354,26 @@ end
 
 -- Used by dp.Preprocess instances to replace the input
 -- see dp.ZCA:apply() for an example
-function DataView:replace(view, output)
+function DataView:replace(view, output, inplace)
    self:backward(view, output)
    output = self:backward()
-   self:input(output)
+   if inplace then
+      self._input:copy(output)
+   else
+      self:input(output)
+   end
    self:flush()
+   -- forwardPut it back in
+   self:forward(self._view, self._input)
 end
 
 -- flush module and tensor cache
 function DataView:flush()
    self._tensors = {}
    self._modules = nil
+   self._module_graph = {}
+   self._got = false
+   self._put = false
 end
 
 -- When v is provided, reuse its data (a torch.Tensor).
@@ -276,8 +397,9 @@ function DataView:index(v, indices)
    return v
 end
 
---Returns a sub-view narrowed on the batch dimension
-function DataView:sub(v, start, stop)
+-- Returns a sub-view narrowed on the batch dimension
+-- inplace returns a narrow window into self._input instead of a copy
+function DataView:sub(v, start, stop, inplace)
    local b_pos = self:findAxis('b')
    local data
    if v and stop then
@@ -288,20 +410,50 @@ function DataView:sub(v, start, stop)
       if v._view and self._view ~= v._view then
          error("Expecting arg 1 to have same view")
       end
-      data = v:input()
+      data = v:input() or self:input().new()
    else
       if v then
+         inplace = stop
          stop = start
          start = v
       end
       v = torch.protoClone(self)
-      data = torch.protoClone(self:input())
+      data = self:input().new()
    end
    local input = self._input:narrow(b_pos, start, stop-start+1)
-   data:resizeAs(input)
-   data:copy(input)
+   if inplace then
+      -- user beware: this doesn't interact well with :index()
+      data:set(input) 
+   else
+      data:resizeAs(input)
+      data:copy(input)
+   end
    v:forward(self._view, data)
    return v
+end
+
+-- optional : do sub inplace (no mem-copy), reuse returned dataview
+function DataView:ipairsSub(batchSize, inplace, reuse)
+   local nSample = self:nSample()
+   local start = 1
+   local nSampled = 0
+   local stop
+   local dv = reuse and torch.protoClone(self) or false
+   -- build iterator
+   return function()
+      if nSampled >= nSample then
+         return
+      end
+      dv = dv or torch.protoClone(self)
+      stop = math.min(start+batchSize-1, nSample)
+      -- inputs and targets
+      self:sub(dv, start, stop, inplace)
+      
+      nSampled = nSampled + stop - start + 1
+      start = start + batchSize
+      collectgarbage() 
+      return stop, dv
+   end
 end
 
 function DataView:type(type)

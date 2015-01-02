@@ -20,7 +20,7 @@ function SoftmaxTree:__init(config)
        help='Number of input neurons'},
       {arg='hierarchy', type='table', req=true,
        help='A table mapping parent_ids to a tensor of child_ids'},
-      {arg='root_id', type='number | string', default=1,
+      {arg='root_id', type='number', default=1,
        help='id of the root of the tree.'},
       {arg='typename', type='string', default='softmaxtree', 
        help='identifies Model type in reports.'}
@@ -39,15 +39,16 @@ end
 
 -- requires targets be in carry
 function SoftmaxTree:_forward(carry)
-   if carry.evaluate then 
+   if carry:getObj('evaluate') then 
       self._module:evaluate()
    else
       self._module:training()
    end
-   if not (carry.targets and carry.targets.isClassView) then
-      error"carry.targets should refer to a ClassView of targets"
+   local targetView = carry:getObj('targets')
+   if not (targetView and targetView.isClassView) then
+      error"expecting a ClassView of targets"
    end
-   self._targets = carry.targets:forward('b', self._target_type)
+   self._targets = targetView:forward('b', self._target_type)
    -- outputs a column vector of likelihoods of targets
    self:outputAct(self._module:forward{self:inputAct(), self._targets})
    return carry
@@ -84,12 +85,6 @@ function SoftmaxTree:_type(type)
    return self
 end
 
-function SoftmaxTree:zeroGradParameters()
-   if not self._acc_update then
-      self._module:zeroGradParameters()
-   end
-end
-
 -- if after feedforward, returns active parameters 
 -- else returns all parameters
 function SoftmaxTree:parameters()
@@ -115,9 +110,6 @@ end
 
 function SoftmaxTree:maxNorm(max_out_norm)
    self._smt:maxNorm(max_out_norm, true)
-   if self._acc_update then
-      self._smt.updates = {}
-   end
 end
 
 function SoftmaxTree:pushDropout(dropout)
@@ -130,3 +122,6 @@ function SoftmaxTree:pushDropout(dropout)
    self._module = mlp
 end
 
+function SoftmaxTree:_toModule()
+   error"Not Implemented : TODO implement using Push/PullTable... (open a ticket to motivate us to do it)"
+end

@@ -12,8 +12,8 @@ cmd:text('$> th conditionalcomputation.lua --small --batchSize 512 ')
 cmd:text('$> th conditionalcomputation.lua --tiny --batchSize 512 ')
 cmd:text('Options:')
 cmd:option('--learningRate', 0.1, 'learning rate at t=0')
-cmd:option('--decayPoint', 100, 'epoch at which learning rate is decayed')
-cmd:option('--decayFactor', 0.1, 'factory by which learning rate is decayed at decay point')
+cmd:option('--decayPoints', '{20,100,125}', 'epochs at which learning rate is decayed')
+cmd:option('--learningRates', '{0.2,0.1,0.01}', 'learning rate at decay points')
 cmd:option('--maxOutNorm', 0, 'max norm each layers output neuron weights')
 cmd:option('--maxNormPeriod', 5, 'Applies MaxNorm Visitor every maxNormPeriod batches')
 cmd:option('--batchSize', 512, 'number of examples per batch')
@@ -56,7 +56,10 @@ cmd:option('--progress', false, 'print progress bar')
 
 cmd:text()
 opt = cmd:parse(arg or {})
-print(opt)
+table.print(opt)
+
+opt.decayPoints = table.fromString(opt.decayPoints)
+opt.learningRates = table.fromString(opt.learningRates)
 
 
 --[[data]]--
@@ -72,7 +75,6 @@ local datasource = dp.BillionWords{
 }
 
 --[[Model]]--
-cutorch.setDevice(opt.useDevice)
 
 print("Input to first hidden layer has "..
    opt.contextSize*opt.inputEmbeddingSize.." neurons.")
@@ -144,7 +146,11 @@ mlp = dp.Sequential{
    }
 }
 
-mlp:cuda()
+local schedule = {}
+for i,decayPoint in ipairs(opt.decayPoints) do
+   schedule[decayPoint] = opt.learningRates[i]
+end
+print("schedule:", schedule)
 
 --[[Propagators]]--
 train = dp.Optimizer{
@@ -152,9 +158,7 @@ train = dp.Optimizer{
    visitor = { -- the ordering here is important:
       dp.Learn{
          learning_rate = opt.learningRate, 
-         observer = dp.LearningRateSchedule{
-            schedule = {[opt.decayPoint]=opt.learningRate*opt.decayFactor}
-         }
+         observer = dp.LearningRateSchedule{schedule = schedule}
       },
       dp.MaxNorm{max_out_norm = opt.maxOutNorm, period=opt.maxNormPeriod}
    },
@@ -194,5 +198,11 @@ xp = dp.Experiment{
    random_seed = os.time(),
    max_epoch = opt.maxEpoch
 }
+
+cutorch.setDevice(opt.useDevice)
+xp:cuda()
+
+print"dp.Models :"
+print(mlp)
 
 xp:run(datasource)

@@ -78,7 +78,6 @@ function Container:doneBatch(...)
    for i=1,#self._models do
       self._models[i]:doneBatch(...)
    end
-   -- stops parent from calling zeroGradParameters (again)
    self.backwarded = false
    parent.doneBatch(self, ...)
 end
@@ -96,5 +95,9 @@ function Container:reset(stdv)
 end
 
 function Container:parameters()
-   error"NotImplementedError"
+   error"Not Implemented"
+end
+
+function Container:_toModule()
+   error"Not Implemented"
 end

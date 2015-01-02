@@ -17,15 +17,6 @@ require 'lfs'
 
 dp = {}
 dp.TORCH_DIR = os.getenv('TORCH_DATA_PATH') or os.getenv('HOME')
-
-dp.DATA_DIR = os.getenv('DEEP_DATA_PATH') 
-   or paths.concat(dp.TORCH_DIR, 'data')
-
-dp.SAVE_DIR = os.getenv('DEEP_SAVE_PATH') 
-   or paths.concat(dp.TORCH_DIR, 'save')
-   
-dp.LOG_DIR = os.getenv('DEEP_LOG_PATH') 
-   or paths.concat(dp.TORCH_DIR, 'log')
    
 --[[ utils ]]--
 torch.include('dp', 'utils/utils.lua')
@@ -33,6 +24,23 @@ torch.include('dp', 'utils/underscore.lua')
 torch.include('dp', 'utils/os.lua')
 torch.include('dp', 'utils/table.lua')
 torch.include('dp', 'utils/torch.lua')
+
+--[[ directory structure ]]--
+dp.DATA_DIR = os.getenv('DEEP_DATA_PATH') 
+   or paths.concat(dp.TORCH_DIR, 'data')
+dp.check_and_mkdir(dp.DATA_DIR)
+
+dp.SAVE_DIR = os.getenv('DEEP_SAVE_PATH') 
+   or paths.concat(dp.TORCH_DIR, 'save')
+dp.check_and_mkdir(dp.SAVE_DIR)
+
+dp.LOG_DIR = os.getenv('DEEP_LOG_PATH') 
+   or paths.concat(dp.TORCH_DIR, 'log')
+dp.check_and_mkdir(dp.LOG_DIR)
+
+dp.UNIT_DIR = os.getenv('DEEP_UNIT_PATH') 
+   or paths.concat(dp.TORCH_DIR, 'unit')
+dp.check_and_mkdir(dp.UNIT_DIR)
    
 --[[ misc ]]--
 torch.include('dp', 'choose.lua')
@@ -50,12 +58,11 @@ torch.include('dp', 'view/sequenceview.lua')
 torch.include('dp', 'view/listview.lua')
 
 --[[ data ]]--
-torch.include('dp', 'data/conv2d.lua')
-
 torch.include('dp', 'data/baseset.lua')
 torch.include('dp', 'data/dataset.lua')
 torch.include('dp', 'data/sentenceset.lua')
 torch.include('dp', 'data/batch.lua')
+torch.include('dp', 'data/carry.lua')
 
 torch.include('dp', 'data/datasource.lua')
 torch.include('dp', 'data/mnist.lua')
@@ -65,6 +72,7 @@ torch.include('dp', 'data/cifar100.lua')
 torch.include('dp', 'data/notmnist.lua')
 torch.include('dp', 'data/facialkeypoints.lua')
 torch.include('dp', 'data/billionwords.lua')
+torch.include('dp', 'data/svhn.lua')
 
 --[[ preprocess ]]--
 torch.include('dp', 'preprocess/preprocess.lua')
@@ -94,6 +102,7 @@ torch.include('dp', 'feedback/facialkeypointfeedback.lua')
 --[[ visitor ]]--
 torch.include('dp', 'visitor/visitor.lua')
 torch.include('dp', 'visitor/visitorchain.lua')
+torch.include('dp', 'visitor/recurrentvisitorchain.lua')
 torch.include('dp', 'visitor/maxnorm.lua')
 torch.include('dp', 'visitor/weightdecay.lua')
 torch.include('dp', 'visitor/learn.lua')
@@ -103,9 +112,11 @@ torch.include('dp', 'visitor/momentum.lua')
 torch.include('dp', 'observer/observer.lua')
 torch.include('dp', 'observer/compositeobserver.lua')
 torch.include('dp', 'observer/logger.lua')
+torch.include('dp', 'observer/errorminima.lua')
 torch.include('dp', 'observer/earlystopper.lua')
 torch.include('dp', 'observer/savetofile.lua') --not an observer
 torch.include('dp', 'observer/learningrateschedule.lua')
+torch.include('dp', 'observer/adaptivelearningrate.lua')
 torch.include('dp', 'observer/filelogger.lua')
 
 --[[ nn ]]--
@@ -121,12 +132,15 @@ torch.include('dp', 'model/layer.lua')
 torch.include('dp', 'model/neural.lua')
 torch.include('dp', 'model/module.lua')
 torch.include('dp', 'model/dictionary.lua')
+torch.include('dp', 'model/narrowdictionary.lua')
+torch.include('dp', 'model/recurrentdictionary.lua')
 torch.include('dp', 'model/softmaxtree.lua')
 torch.include('dp', 'model/softmaxforest.lua')
 torch.include('dp', 'model/mixtureofexperts.lua')
 torch.include('dp', 'model/blocksparse.lua')
 torch.include('dp', 'model/convolution1D.lua')
 torch.include('dp', 'model/convolution2D.lua')
+torch.include('dp', 'model/inception.lua')
 
 --[[ loss ]]--
 torch.include('dp', 'loss/loss.lua')
@@ -134,6 +148,7 @@ torch.include('dp', 'loss/nll.lua')
 torch.include('dp', 'loss/kldivergence.lua')
 torch.include('dp', 'loss/treenll.lua')
 torch.include('dp', 'loss/null.lua')
+torch.include('dp', 'loss/criterion.lua')
 
 --[[ hyper ]]--
 torch.include('dp', 'hyper/hyperoptimizer.lua')
